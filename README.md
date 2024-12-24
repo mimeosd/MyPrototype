@@ -22,3 +22,5 @@ Regarding maps - I was using Open street maps as they are free and open source.
 I did not go with Mapbox as I am not so familiar with their api.
 Google - most reliable but if you plan to scale price will go up heavily for their use.
 That is why I asked you so many questions....
+
+

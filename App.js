@@ -4,101 +4,290 @@ import {
   Text,
   StyleSheet,
   FlatList,
-  TextInput,
   Button,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
-import MapView, { Marker, UrlTile } from 'react-native-maps';
-import { createStackNavigator } from '@react-navigation/stack';
 import { NavigationContainer } from '@react-navigation/native';
+import { createStackNavigator } from '@react-navigation/stack';
+import MapView, { Marker } from 'react-native-maps';
+import * as MediaLibrary from 'expo-media-library';
+import * as Calendar from 'expo-calendar';
 
 const FLASK_API_URL = 'https://reactappdb.onrender.com';
 
-const Stack = createStackNavigator();
 
-const MeetingFinderScreen = ({ navigation }) => {
-  const [meetings, setMeetings] = useState([
-    {
-      id: 1,
-      title: 'Default Meeting',
-      description: 'This is a default meeting for testing.',
-      latitude: 37.7749,
-      longitude: -122.4194,
-    },
-  ]);
-  const [selectedMeeting, setSelectedMeeting] = useState(null);
-  const [newMeeting, setNewMeeting] = useState({
-    title: '',
-    description: '',
-    latitude: '',
-    longitude: '',
-  });
+function HomeScreen({ navigation }) {
+  const [meetingsAttended] = useState(12);
+  const [goal] = useState(30);
+
+  // We'll store upcoming meetings fetched from Flask
+  const [upcomingMeetings, setUpcomingMeetings] = useState([]);
+  // Optionally track errors
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    const fetchMeetings = async () => {
+    const fetchUpcomingMeetings = async () => {
       try {
+        setError(null); // reset any previous error
         const response = await fetch(`${FLASK_API_URL}/meetings`);
         if (!response.ok) {
           throw new Error(`Error: ${response.status}`);
         }
         const data = await response.json();
-        setMeetings((prev) => [...prev, ...data]);
-      } catch (error) {
-        console.error('Error fetching meetings:', error);
+
+        
+        const now = new Date();
+        const twoDaysFromNow = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
+
+        const filtered = data.filter((m) => {
+          if (!m.start_time) return false; // if no start_time, skip
+          const st = new Date(m.start_time);
+          // "upcoming" means st is after now AND before or at +2 days
+          return st > now && st <= twoDaysFromNow;
+        });
+
+        setUpcomingMeetings(filtered);
+      } catch (err) {
+        console.error('Error fetching upcoming meetings:', err);
+        setError(err.message);
+        setUpcomingMeetings([]);
+      }
+    };
+
+    fetchUpcomingMeetings();
+  }, []);
+
+  // Calculate progress for the progress bar
+  const progress = goal > 0 ? meetingsAttended / goal : 0;
+  const progressPercent = `${Math.min(progress * 100, 100)}%`;
+
+  // Render each upcoming meeting item
+  const renderUpcomingMeeting = ({ item }) => (
+    <View style={styles.upcomingMeetingItem}>
+      <Text style={styles.upcomingMeetingText}>{item.title}</Text>
+      {/* Optional: Show the start time or date */}
+      {item.start_time && (
+        <Text style={styles.upcomingMeetingText}>
+          Starts: {new Date(item.start_time).toLocaleString()}
+        </Text>
+      )}
+    </View>
+  );
+
+  
+  const renderHeader = () => (
+    <>
+      {/* Top row with Meetings Attended & Goal */}
+      <View style={styles.topRowContainer}>
+        <View style={styles.meetingsBox}>
+          <Text style={styles.meetingsBoxText}>
+            Meetings Attended: {meetingsAttended}
+          </Text>
+        </View>
+
+        <View style={styles.goalBox}>
+          <Text style={styles.goalBoxText}>Goal: {goal}</Text>
+        </View>
+      </View>
+
+      {/* Progress Bar */}
+      <View style={styles.progressBarContainer}>
+        <View style={styles.progressBarBackground}>
+          <View style={[styles.progressBarFill, { width: progressPercent }]} />
+        </View>
+        <Text style={styles.progressText}>
+          {Math.round(progress * 100)}% Complete
+        </Text>
+      </View>
+
+      {/* Button row: Check In (left), Find Meeting (right) */}
+      <View style={styles.buttonRow}>
+        <TouchableOpacity
+          style={[styles.homeButton, { marginRight: 10 }]}
+          onPress={() => navigation.navigate('Check-In')}
+        >
+          <Text style={styles.homeButtonText}>Check In (Take Selfie)</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.homeButton, { marginLeft: 10 }]}
+          onPress={() => navigation.navigate('Meeting Finder')}
+        >
+          <Text style={styles.homeButtonText}>Find Meeting</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Label for Upcoming Meetings */}
+      <Text style={styles.upcomingTitle}>Upcoming Meetings</Text>
+
+      {/* If there's an error or no data, show a message */}
+      {error && (
+        <Text style={{ color: 'red', marginLeft: 20 }}>
+          {error}
+        </Text>
+      )}
+      {(!error && upcomingMeetings.length === 0) && (
+        <Text style={{ marginLeft: 20 }}>
+          No upcoming meetings found.
+        </Text>
+      )}
+    </>
+  );
+
+  return (
+    <View style={styles.homeContainer}>
+      <FlatList
+        data={upcomingMeetings}
+        keyExtractor={(item) => item.id.toString()}
+        renderItem={renderUpcomingMeeting}
+        ListHeaderComponent={renderHeader}
+        contentContainerStyle={styles.upcomingListContent}
+      />
+    </View>
+  );
+}
+
+
+function MeetingFinderScreen({ navigation }) {
+  const [meetings, setMeetings] = useState([]);
+  const [error, setError] = useState(null);
+
+  // Fetch all meetings from Flask API
+  useEffect(() => {
+    const fetchMeetings = async () => {
+      try {
+        setError(null);
+        const response = await fetch(`${FLASK_API_URL}/meetings`);
+        if (!response.ok) {
+          throw new Error(`Error: ${response.status}`);
+        }
+        const data = await response.json();
+        if (!Array.isArray(data) || data.length === 0) {
+          setMeetings([]);
+        } else {
+          setMeetings(data);
+        }
+      } catch (err) {
+        console.error('Error fetching meetings:', err);
+        setError(err.message);
+        setMeetings([]);
       }
     };
     fetchMeetings();
   }, []);
 
-  const addMeeting = async () => {
+  // ------------- Add event to phone's calendar -------------
+  const addEventToCalendar = async (meeting) => {
     try {
-      if (newMeeting.title && newMeeting.description && newMeeting.latitude && newMeeting.longitude) {
-        const response = await fetch(`${FLASK_API_URL}/meetings`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: newMeeting.title,
-            description: newMeeting.description,
-            latitude: parseFloat(newMeeting.latitude),
-            longitude: parseFloat(newMeeting.longitude),
-          }),
-        });
-
-        if (!response.ok) {
-          alert('Error creating meeting');
-          return;
-        }
-        const createdMeeting = await response.json();
-        setMeetings([...meetings, createdMeeting]);
-        setNewMeeting({ title: '', description: '', latitude: '', longitude: '' });
-      } else {
-        alert('Please fill out all fields');
+      // Request permission to access Calendars
+      const { status } = await Calendar.requestCalendarPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission denied!', 'Cannot add event to calendar.');
+        return;
       }
-    } catch (error) {
-      console.error('Error adding meeting:', error);
-      alert('Something went wrong while adding the meeting.');
+
+      // Find or create a calendar to add events. 
+      const defaultCalendarId = await getDefaultCalendarId();
+
+      // start_time/end_time from meeting data
+      const startTime = meeting.start_time
+        ? new Date(meeting.start_time)
+        : new Date();
+      const endTime = meeting.end_time
+        ? new Date(meeting.end_time)
+        : new Date(Date.now() + 60 * 60 * 1000); // default 1 hr after start
+
+      const eventDetails = {
+        title: meeting.title || 'Meeting',
+        notes: meeting.description || '',
+        startDate: startTime,
+        endDate: endTime,
+        timeZone: 'UTC', // I will might need to mod this in case we need diff time zone
+        location: `${meeting.latitude}, ${meeting.longitude}`,
+      };
+
+      const eventId = await Calendar.createEventAsync(defaultCalendarId, eventDetails);
+      Alert.alert('Success', `Event created in calendar (ID: ${eventId})`);
+    } catch (err) {
+      console.error('Error adding event to calendar:', err);
+      Alert.alert('Error', 'Unable to create calendar event');
     }
   };
 
+  // Helper function to find or create a default calendar
+  const getDefaultCalendarId = async () => {
+    const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
+    // Try to find a "default" calendar
+    const defaultCalendars = calendars.filter(
+      (cal) => cal.isPrimary || cal.source?.name === 'Default'
+    );
+    if (defaultCalendars.length) {
+      return defaultCalendars[0].id;
+    }
+    
+    if (calendars.length) {
+      return calendars[0].id;
+    }
+    
+    const newCalendarId = await createNewCalendar();
+    return newCalendarId;
+  };
+
+  
+  const createNewCalendar = async () => {
+    const defaultCalendarSource =
+      Platform.OS === 'ios'
+        ? await Calendar.getDefaultCalendarAsync()
+        : { isLocalAccount: true, name: 'Expo Calendar' };
+
+    const newCalendar = {
+      title: 'My Meetings Calendar',
+      color: '#512DA8',
+      entityType: Calendar.EntityTypes.EVENT,
+      sourceId: defaultCalendarSource.id,
+      source: defaultCalendarSource,
+      name: 'Internal Meetings Calendar',
+      ownerAccount: 'personal',
+      accessLevel: Calendar.CalendarAccessLevel.OWNER,
+    };
+
+    return await Calendar.createCalendarAsync(newCalendar);
+  };
+
+  // ------------------------------------------------------
+
+  
   const renderMeetingItem = ({ item }) => (
-    <TouchableOpacity
-      style={styles.listItem}
-      onPress={() => setSelectedMeeting(item)}
-    >
+    <TouchableOpacity style={styles.listItem}>
       <Text style={styles.listItemText}>{item.title}</Text>
       <Text style={styles.listItemSubText}>{item.description}</Text>
+
+      <View style={{ marginVertical: 5 }}>
+        <Button
+          title="Add to Calendar"
+          onPress={() => addEventToCalendar(item)}
+        />
+      </View>
+
+      <View style={{ marginVertical: 5 }}>
+        <Button
+          title="Check-In"
+          onPress={() => navigation.navigate('Check-In')}
+        />
+      </View>
     </TouchableOpacity>
   );
 
   return (
     <View style={styles.container}>
+      {error && (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>Error fetching meetings: {error}</Text>
+        </View>
+      )}
 
-      {/* Top Navigation Buttons */}
-      <View style={styles.topNavContainer}>
-        <Button title="Check-In" onPress={() => navigation.navigate('Check-In')} />
-        <Button title="Chat" onPress={() => navigation.navigate('Chat')} />
-      </View>
-
+      {/* Show a map with markers */}
       <MapView
         style={styles.map}
         initialRegion={{
@@ -108,167 +297,212 @@ const MeetingFinderScreen = ({ navigation }) => {
           longitudeDelta: 0.1,
         }}
       >
-        <UrlTile urlTemplate="https://tile.openstreetmap.org/{z}/{x}/{y}.png" maximumZ={19} />
-        {meetings.map((meeting) => (
-          <Marker
-            key={meeting.id}
-            coordinate={{ latitude: meeting.latitude, longitude: meeting.longitude }}
-            title={meeting.title}
-            description={meeting.description}
-            onPress={() => setSelectedMeeting(meeting)}
-          />
-        ))}
+        {meetings.map((meeting) => {
+          
+          const lat = parseFloat(meeting.latitude);
+          const lon = parseFloat(meeting.longitude);
+
+          
+          if (isNaN(lat) || isNaN(lon)) {
+            console.warn(
+              `Skipping marker for meeting ID ${meeting.id} due to invalid coords:`,
+              meeting.latitude,
+              meeting.longitude
+            );
+            return null;
+          }
+
+          return (
+            <Marker
+              key={meeting.id}
+              coordinate={{ latitude: lat, longitude: lon }}
+              title={meeting.title}
+              description={meeting.description}
+            />
+          );
+        })}
       </MapView>
 
-      {/* Bottom Container (FlatList + Add Form) */}
-      <View style={styles.bottomContainer}>
+      {meetings.length === 0 && !error ? (
+        <View style={styles.noMeetingsContainer}>
+          <Text style={styles.noMeetingsText}>No meetings found.</Text>
+        </View>
+      ) : (
         <FlatList
           data={meetings}
           keyExtractor={(item) => item.id.toString()}
           renderItem={renderMeetingItem}
           style={styles.list}
         />
-
-        <View style={styles.addMeetingForm}>
-          <TextInput
-            style={styles.input}
-            placeholder="Title"
-            value={newMeeting.title}
-            onChangeText={(text) => setNewMeeting({ ...newMeeting, title: text })}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Description"
-            value={newMeeting.description}
-            onChangeText={(text) => setNewMeeting({ ...newMeeting, description: text })}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Latitude"
-            keyboardType="numeric"
-            value={newMeeting.latitude}
-            onChangeText={(text) => setNewMeeting({ ...newMeeting, latitude: text })}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Longitude"
-            keyboardType="numeric"
-            value={newMeeting.longitude}
-            onChangeText={(text) => setNewMeeting({ ...newMeeting, longitude: text })}
-          />
-          <Button title="Add Meeting" onPress={addMeeting} />
-        </View>
-      </View>
-
-      {selectedMeeting && (
-        <View style={styles.selectedMeetingBox}>
-          <Text style={styles.selectedMeetingTitle}>{selectedMeeting.title}</Text>
-          <Text style={styles.selectedMeetingDescription}>
-            {selectedMeeting.description}
-          </Text>
-          <Button title="Close" onPress={() => setSelectedMeeting(null)} />
-        </View>
       )}
     </View>
   );
-};
+}
 
-const CheckInScreen = ({ navigation }) => {
-  const [location, setLocation] = useState(null);
-  const [selfie, setSelfie] = useState(null);
-
-  const fetchLocation = () => {
-    setLocation({ latitude: 37.7749, longitude: -122.4194 });
-  };
-
-  const uploadSelfie = () => {
-    setSelfie('selfie.jpg');
+/* ------------------------------------------------------
+   3) CHECK-IN SCREEN
+------------------------------------------------------ */
+function CheckInScreen() {
+  const openCamera = async () => {
+    const { status } = await MediaLibrary.requestPermissionsAsync();
+    if (status === 'granted') {
+      Alert.alert(
+        'Camera permission granted!',
+        'You can now implement the camera functionality here.'
+      );
+    } else {
+      Alert.alert('Camera permission denied!');
+    }
   };
 
   return (
-    <View style={styles.container}>
+    <View style={styles.containerCenter}>
       <Text style={styles.header}>Check-In</Text>
-      <Button title="Get Location" onPress={fetchLocation} />
-      {location && (
-        <Text style={styles.info}>
-          Location: {location.latitude}, {location.longitude}
-        </Text>
-      )}
-      <Button title="Upload Selfie" onPress={uploadSelfie} />
-      {selfie && <Text style={styles.info}>Selfie Uploaded: {selfie}</Text>}
-      <Button title="Submit Check-In" onPress={() => alert('Check-In Submitted!')} />
-      <Button title="Go to Chat" onPress={() => navigation.navigate('Chat')} />
+      <View style={{ marginVertical: 10 }}>
+        <Button title="Open Camera" onPress={openCamera} />
+      </View>
+      <View style={{ marginVertical: 10 }}>
+        <Button
+          title="Submit Check-In"
+          onPress={() => Alert.alert('Check-In Submitted!')}
+        />
+      </View>
     </View>
   );
-};
+}
 
-const ChatScreen = () => {
-  const [messages, setMessages] = useState([]);
-  const [newMessage, setNewMessage] = useState('');
+/* ------------------------------------------------------
+   NAVIGATION SETUP
+------------------------------------------------------ */
+const Stack = createStackNavigator();
 
-  const sendMessage = () => {
-    setMessages((prevMessages) => [
-      ...prevMessages,
-      { text: newMessage, id: Date.now() },
-    ]);
-    setNewMessage('');
-  };
-
-  return (
-    <View style={styles.container}>
-      <Text style={styles.header}>Chat</Text>
-      <FlatList
-        data={messages}
-        keyExtractor={(item) => item.id.toString()}
-        renderItem={({ item }) => <Text style={styles.chatMessage}>{item.text}</Text>}
-      />
-      <TextInput
-        style={styles.input}
-        value={newMessage}
-        onChangeText={setNewMessage}
-        placeholder="Type a message..."
-      />
-      <Button title="Send" onPress={sendMessage} />
-    </View>
-  );
-};
-
-const App = () => {
+export default function App() {
   return (
     <NavigationContainer>
-      <Stack.Navigator>
+      <Stack.Navigator initialRouteName="Home">
+        <Stack.Screen name="Home" component={HomeScreen} />
         <Stack.Screen name="Meeting Finder" component={MeetingFinderScreen} />
         <Stack.Screen name="Check-In" component={CheckInScreen} />
-        <Stack.Screen name="Chat" component={ChatScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
-};
+}
 
+/* ------------------------------------------------------
+   STYLES
+------------------------------------------------------ */
 const styles = StyleSheet.create({
+  // ---------- HOME SCREEN -----------
+  homeContainer: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  topRowContainer: {
+    flexDirection: 'row',
+    marginTop: 20,
+    paddingHorizontal: 10,
+  },
+  meetingsBox: {
+    flex: 2,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    padding: 10,
+    marginRight: 5,
+    justifyContent: 'center',
+  },
+  goalBox: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    padding: 10,
+    marginLeft: 5,
+    justifyContent: 'center',
+  },
+  meetingsBoxText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  goalBoxText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+
+  // ---------- PROGRESS BAR -----------
+  progressBarContainer: {
+    marginTop: 20,
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  progressBarBackground: {
+    width: '100%',
+    height: 20,
+    backgroundColor: '#eee',
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#4CAF50',
+  },
+  progressText: {
+    marginTop: 8,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+
+  // ---------- BUTTON ROW -----------
+  buttonRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: 20,
+    paddingHorizontal: 20,
+  },
+  homeButton: {
+    flex: 1,
+    backgroundColor: '#007AFF',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  homeButtonText: {
+    color: '#fff',
+    fontSize: 16,
+  },
+
+  // ---------- UPCOMING MEETINGS -----------
+  upcomingTitle: {
+    marginTop: 30,
+    marginLeft: 20,
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  upcomingListContent: {
+    paddingBottom: 20,
+  },
+  upcomingMeetingItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#ccc',
+  },
+  upcomingMeetingText: {
+    fontSize: 16,
+  },
+
+  // ---------- MEETING FINDER SCREEN -----------
   container: {
     flex: 1,
   },
-  topNavContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingTop: 10,
-    paddingBottom: 5,
-    backgroundColor: '#f5f5f5',
+  containerCenter: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   map: {
     flex: 3,
   },
-  bottomContainer: {
-    flex: 2,
-    backgroundColor: '#fff',
-  },
   list: {
-    maxHeight: 200,
-  },
-  addMeetingForm: {
-    padding: 10,
-    backgroundColor: '#f0f0f0',
+    flex: 2,
   },
   listItem: {
     padding: 15,
@@ -283,53 +517,27 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#555',
   },
-  selectedMeetingBox: {
-    position: 'absolute',
-    bottom: 10,
-    left: 10,
-    right: 10,
-    backgroundColor: '#fff',
-    padding: 15,
-    borderRadius: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 5,
-  },
-  selectedMeetingTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  selectedMeetingDescription: {
-    fontSize: 16,
-    color: '#555',
-    marginTop: 5,
-  },
   header: {
     fontSize: 24,
-    fontWeight: 'bold',
     textAlign: 'center',
     marginVertical: 20,
   },
-  info: {
-    marginVertical: 10,
-    fontSize: 16,
+  noMeetingsContainer: {
+    flex: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  chatMessage: {
-    fontSize: 16,
-    marginVertical: 5,
-    backgroundColor: '#eee',
-    padding: 5,
-    borderRadius: 3,
+  noMeetingsText: {
+    fontSize: 18,
+    color: '#888',
   },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 5,
+  errorContainer: {
     padding: 10,
-    marginBottom: 10,
+    backgroundColor: '#fdecea',
+  },
+  errorText: {
+    color: '#d93025',
+    fontSize: 14,
+    textAlign: 'center',
   },
 });
-
-export default App;
