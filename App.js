@@ -9,14 +9,18 @@ import {
   Alert,
   Platform,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
+
 import MapView, { Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as MediaLibrary from 'expo-media-library';
-import { Camera } from 'expo-camera';
 import * as Calendar from 'expo-calendar';
+
+
+import * as ImagePicker from 'expo-image-picker';
 
 const FLASK_API_URL = 'https://reactappdb.onrender.com';
 
@@ -166,13 +170,15 @@ function MeetingFinderScreen({ navigation }) {
   }, []);
 
   const distanceInMiles = (lat1, lon1, lat2, lon2) => {
-    const R = 3958.8;
+    const R = 3958.8; // miles Ivan remmber that
     const dLat = toRad(lat2 - lat1);
     const dLon = toRad(lon2 - lon1);
     const a =
       Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      Math.cos(toRad(lat1)) *
+        Math.cos(toRad(lat2)) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
   };
@@ -214,7 +220,10 @@ function MeetingFinderScreen({ navigation }) {
         timeZone: 'UTC',
         location: `${meeting.latitude}, ${meeting.longitude}`,
       };
-      const eventId = await Calendar.createEventAsync(defaultCalendarId, eventDetails);
+      const eventId = await Calendar.createEventAsync(
+        defaultCalendarId,
+        eventDetails
+      );
       Alert.alert('Success', `Event created (ID: ${eventId})`);
     } catch (err) {
       console.error('Error adding event to calendar:', err);
@@ -223,7 +232,9 @@ function MeetingFinderScreen({ navigation }) {
   };
 
   const getDefaultCalendarId = async () => {
-    const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
+    const calendars = await Calendar.getCalendarsAsync(
+      Calendar.EntityTypes.EVENT
+    );
     const defaultCalendars = calendars.filter(
       (cal) => cal.isPrimary || cal.source?.name === 'Default'
     );
@@ -262,10 +273,7 @@ function MeetingFinderScreen({ navigation }) {
         <Button title="Add to Calendar" onPress={() => addEventToCalendar(item)} />
       </View>
       <View style={{ marginVertical: 5 }}>
-        <Button
-          title="Check-In"
-          onPress={() => navigation.navigate('Check-In')}
-        />
+        <Button title="Check-In" onPress={() => navigation.navigate('Check-In')} />
       </View>
     </TouchableOpacity>
   );
@@ -333,32 +341,54 @@ function MeetingFinderScreen({ navigation }) {
   );
 }
 
-function CheckInScreen() {
-  const [hasCameraPermission, setHasCameraPermission] = useState(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const cameraRef = useRef(null);
-  const [cameraType] = useState(Camera?.Constants?.Type?.back);
 
+function CheckInScreen() {
+  const [hasGalleryPermission, setHasGalleryPermission] = useState(null);
+  const [selectedImageUri, setSelectedImageUri] = useState(null);
+  const [isUploading, setIsUploading] = useState(false);
+
+  // Request permission to access the media library goies here
   useEffect(() => {
     (async () => {
-      const { status } = await Camera.requestCameraPermissionsAsync();
-      setHasCameraPermission(status === 'granted');
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      setHasGalleryPermission(status === 'granted');
     })();
   }, []);
 
-  const takePicture = async () => {
-    if (cameraRef.current) {
-      const photo = await cameraRef.current.takePictureAsync({ base64: false });
-      await uploadSelfie(photo.uri);
+  const openImagePicker = async () => {
+    try {
+      if (!hasGalleryPermission) {
+        Alert.alert('Permission Denied', 'Gallery access is required.');
+        return;
+      }
+
+      
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images, // TODO: need to replace this deprecated crap
+        allowsEditing: true,  
+        aspect: [1, 1],       
+        quality: 1,           
+      });
+
+      if (!result.canceled) {
+        
+        setSelectedImageUri(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error opening gallery:', error);
     }
   };
 
-  const uploadSelfie = async (uri) => {
+  const uploadSelfie = async () => {
+    if (!selectedImageUri) {
+      Alert.alert('No image selected', 'Please pick an image first.');
+      return;
+    }
     try {
       setIsUploading(true);
       const formData = new FormData();
       formData.append('selfie', {
-        uri,
+        uri: selectedImageUri,
         name: `selfie_${Date.now()}.jpg`,
         type: 'image/jpg',
       });
@@ -383,55 +413,49 @@ function CheckInScreen() {
     }
   };
 
-  if (hasCameraPermission === null) {
+  if (hasGalleryPermission === null) {
     return (
       <View style={styles.containerCenter}>
-        <Text>Requesting Camera Permission...</Text>
+        <Text>Requesting Gallery Permission...</Text>
       </View>
     );
   }
-  if (hasCameraPermission === false) {
+  if (hasGalleryPermission === false) {
     return (
       <View style={styles.containerCenter}>
-        <Text>No access to camera.</Text>
-      </View>
-    );
-  }
-  if (!Camera || !Camera.Constants) {
-    return (
-      <View style={styles.containerCenter}>
-        <Text>expo-camera not properly installed or imported.</Text>
+        <Text>No access to photos.</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <Camera
-        style={styles.cameraPreview}
-        ref={cameraRef}
-        type={cameraType}
-        ratio="16:9"
-      />
-      <View style={styles.cameraButtonsContainer}>
-        {isUploading ? (
-          <>
-            <ActivityIndicator size="large" color="#000" />
-            <Text>Uploading selfie...</Text>
-          </>
-        ) : (
-          <>
-            <Button title="Take Photo & Upload" onPress={takePicture} />
-            <View style={{ marginVertical: 10 }}>
-              <Button
-                title="Submit Check-In"
-                onPress={() => Alert.alert('Check-In Submitted!')}
-              />
-            </View>
-          </>
-        )}
-      </View>
-    </View>
+    <View style={styles.containerCenter}>
+      <Text style={{ fontSize: 18, marginBottom: 10 }}>Check In by Uploading a Selfie</Text>
+      {selectedImageUri && (
+        <Image
+          source={{ uri: selectedImageUri }}
+          style={styles.previewImage}
+          resizeMode="cover"
+        />
+      )}
+      {isUploading ? (
+        <>
+          <ActivityIndicator size="large" color="#000" />
+          <Text>Uploading selfie...</Text>
+        </>
+      ) : (
+        <>
+          <Button title="Open Gallery" onPress={openImagePicker} />
+          <View style={{ marginVertical: 10 }} />
+          <Button title="Upload Selfie" onPress={uploadSelfie} />
+          <View style={{ marginVertical: 10 }} />
+          <Button
+            title="Submit Check-In"
+            onPress={() => Alert.alert('Check-In Submitted!')}
+          />
+        </>
+      )}
+    </View> // more fuinc needed here once verification process is up
   );
 }
 
@@ -450,6 +474,7 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  // --- Home Screen Styles ---
   homeContainer: {
     flex: 1,
     backgroundColor: '#fff',
@@ -539,10 +564,12 @@ const styles = StyleSheet.create({
   upcomingMeetingText: {
     fontSize: 16,
   },
+
+  // --- Meeting Finder Styles ---
   container: {
     flex: 1,
   },
-  containerCenter: {
+  center: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
@@ -584,12 +611,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
   },
-  cameraPreview: {
-    flex: 3,
-  },
-  cameraButtonsContainer: {
-    flex: 2,
+
+  // --- Check-In Screen Styles ---
+  containerCenter: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  previewImage: {
+    width: 200,
+    height: 200,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    marginBottom: 10,
   },
 });
